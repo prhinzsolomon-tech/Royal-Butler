@@ -1,5 +1,4 @@
 import os
-import sys
 import random
 import threading
 import traceback
@@ -49,12 +48,21 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Built on iPhone 8. Because greatness doesn't wait for better tools."
     )
 
+def run_web():
+    try:
+        port = int(os.getenv("PORT", 10000))
+        print(f">>> [web thread] starting Flask on port {port}...", flush=True)
+        app_web.run(host="0.0.0.0", port=port, use_reloader=False)
+    except Exception as e:
+        print(f">>> [web thread] error: {e}", flush=True)
+        traceback.print_exc()
+
 def run_bot():
     try:
         print(">>> [bot thread] starting...", flush=True)
         token = os.getenv("BOT_TOKEN")
         if not token:
-            print(">>> [bot thread] ERROR: BOT_TOKEN is missing! Set it in Render Environment.", flush=True)
+            print(">>> [bot thread] ERROR: BOT_TOKEN is missing!", flush=True)
             return
         print(f">>> [bot thread] token found (length: {len(token)})", flush=True)
         app = ApplicationBuilder().token(token).build()
@@ -69,9 +77,8 @@ def run_bot():
         traceback.print_exc()
 
 if __name__ == "__main__":
-    print(">>> launching bot thread...", flush=True)
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    port = int(os.getenv("PORT", 10000))
-    print(f">>> starting web server on port {port}...", flush=True)
-    app_web.run(host="0.0.0.0", port=port)
+    # Start Flask in a thread so it doesn't block
+    web_thread = threading.Thread(target=run_web, daemon=True)
+    web_thread.start()
+    # Run the bot in the main process (has its own event loop)
+    run_bot()

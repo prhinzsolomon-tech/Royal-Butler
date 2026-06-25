@@ -3,16 +3,16 @@ import random
 import sqlite3
 import threading
 import traceback
+import requests
 from datetime import datetime
 from flask import Flask
-from openai import OpenAI
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, CallbackQueryHandler, filters
 
 print(">>> bot.py starting up...", flush=True)
 
 # ============================================
-# DATABASE (SQLite) — drafts + schedules
+# DATABASE (SQLite)
 # ============================================
 DB_PATH = "royalbutler.db"
 
@@ -84,31 +84,50 @@ def clear_state(user_id: int):
     conn.close()
 
 # ============================================
-# AI GENERATOR (OpenAI)
+# AI GENERATOR (Hugging Face free inference)
 # ============================================
+HF_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
+HF_API_URL = f"https://api-inference.huggingface.co/models/{HF_MODEL}"
+
 def generate_statuses(topic: str, mood: str = "neutral", count: int = 5) -> list:
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("HF_API_KEY")
     if not api_key:
-        return [f"[DEV MODE — no OpenAI key] {topic} ({mood}) — would be a great status"] * count
+        return [f"[DEV MODE — no HF_API_KEY set] {topic} ({mood}) — would be a great status"] * count
     try:
-        client = OpenAI(api_key=api_key)
         prompt = (
-            f"Generate {count} short WhatsApp status ideas (1-2 sentences each) about: {topic}. "
-            f"Mood: {mood}. Make them punchy, original, suitable for small business owners in Lagos. "
-            f"Mix styles: 1 promotional, 1 motivational, 1 question, 1 tip, 1 bold statement. "
-            f"Number them 1-{count}. No hashtags unless relevant."
+            f"[INST] Generate {count} short WhatsApp status ideas (1-2 sentences each) "
+            f"about: {topic}. Mood: {mood}. Make them punchy, original, suitable for "
+            f"small business owners in Lagos. Mix styles: 1 promotional, 1 motivational, "
+            f"1 question, 1 tip, 1 bold statement. Number them 1-{count}. "
+            f"No hashtags unless relevant. [/INST]"
         )
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=400,
-        )
-        text = resp.choices[0].message.content
+        headers = {"Authorization": f"Bearer {api_key}"}
+        payload = {
+            "inputs": prompt,
+            "parameters": {
+                "max_new_tokens": 400,
+                "temperature": 0.8,
+                "top_p": 0.9,
+                "return_full_text": False,
+            },
+            "options": {"wait_for_model": True},
+        }
+        resp = requests.post(HF_API_URL, headers=headers, json=payload, timeout=60)
+        if resp.status_code != 200:
+            print(f">>> [ai] HF error {resp.status_code}: {resp.text[:200]}", flush=True)
+            return [f"[HF error {resp.status_code}] {resp.text[:120]}"] * count
+        data = resp.json()
+        if isinstance(data, list) and data:
+            text = data[0].get("generated_text", "")
+        elif isinstance(data, dict):
+            text = data.get("generated_text", "")
+        else:
+            text = str(data)
         lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
-        return lines[:count]
+        return lines[:count] if lines else ["[empty response from AI]"]
     except Exception as e:
         print(f">>> [ai] error: {e}", flush=True)
-        return [f"[AI error] {e}"]
+        return [f"[AI error] {e}"] * count
 
 # ============================================
 # FLASK WEB SERVER
@@ -161,17 +180,15 @@ async def goal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👑 *Royal Butler Pro*\n\n"
-        "Built by Royalty, powered by Mira + OpenAI.\n"
+        "Built by Royalty, powered by Mira + Hugging Face AI.\n"
         "Built on iPhone 8. Because greatness doesn't wait for better tools.",
         parse_mode="Markdown"
     )
 
 # ============ INTERACTIVE GENERATE FLOW ============
 async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Step 1: ask for topic."""
     user_id = update.effective_user.id
     set_state(user_id, "awaiting_topic")
-    # mood quick-pick buttons (sent alongside the prompt)
     await update.message.reply_text(
         "🤖 *AI Status Generator*\n\n"
         "*Step 1 of 2:* What's your status about?\n\n"
@@ -194,7 +211,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     data = query.data
 
-    # ----- Topic quick-pick -----
     if data.startswith("topic_"):
         topic_map = {
             "topic_business": "my small business in Lagos, what makes it special and why customers should care",
@@ -207,8 +223,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         topic = topic_map[data]
         set_state(user_id, "awaiting_mood", topic)
         await query.edit_message_text(
-            f"✅ Topic: *{topic}*\n\n"
-            f"*Step 2 of 2:* Pick a mood:",
+            f"✅ Topic: *{topic}*\n\n*Step 2 of 2:* Pick a mood:",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔥 Excited", callback_data="mood_excited"),
@@ -221,7 +236,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ----- Mood quick-pick → run generation -----
     if data.startswith("mood_"):
         state, topic = get_state(user_id)
         if not topic:
@@ -243,18 +257,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(msg, parse_mode="Markdown")
         return
 
-    # ----- Platforms toggle -----
     if data.startswith("toggle_"):
         platform = data.replace("toggle_", "").upper()
         await query.edit_message_text(f"🔧 Toggled: {platform}\n\n(Real toggles coming Day 4.)")
         return
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Catch free-text input when user is in a state."""
     user_id = update.effective_user.id
     state, data = get_state(user_id)
     if not state:
-        return  # not in a flow, ignore
+        return
 
     text = update.message.text.strip()
 
@@ -274,7 +286,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif state == "awaiting_mood":
-        # user typed a mood instead of clicking a button
         topic = data
         clear_state(user_id)
         await update.message.reply_text(f"🤖 Generating 5 statuses...\n\nTopic: *{topic}*\nMood: *{text}*", parse_mode="Markdown")

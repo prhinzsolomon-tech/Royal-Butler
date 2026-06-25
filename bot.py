@@ -1,6 +1,5 @@
-
-```
 import os
+import random
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
@@ -15,13 +14,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def quote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     quotes = [
-        "Discipline is choosing what you want most over what you want now. — Abraham Lincoln",
+        "Discipline is choosing what you want most over what you want now.",
         "The best time to plant a tree was 20 years ago. The second best time is now.",
         "You don't have to be great to start, but you have to start to be great.",
-        "Small daily improvements are the key to staggering long-term results.",
         "Royalty doesn't rush. He builds."
     ]
-    import random
     await update.message.reply_text("💡 " + random.choice(quotes))
 
 async def goal(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -29,8 +26,7 @@ async def goal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🎯 Today's focus:\n\n"
         "1. Build, don't scroll.\n"
         "2. Send the pitch.\n"
-        "3. No gambling.\n"
-        "4. Show up at 3 AM tomorrow too.\n\n"
+        "3. Show up at 3 AM tomorrow.\n\n"
         "— Royalty's Bot 🤖"
     )
 
@@ -50,4 +46,3 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("about", about))
     app.print_bot_info()
     app.run_polling()
-```

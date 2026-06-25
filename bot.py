@@ -1,10 +1,13 @@
 import os
+import sys
 import random
-import asyncio
 import threading
+import traceback
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+
+print(">>> bot.py starting up...", flush=True)
 
 app_web = Flask(__name__)
 
@@ -47,18 +50,28 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 def run_bot():
-    token = os.getenv("BOT_TOKEN")
-    app = ApplicationBuilder().token(token).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("quote", quote))
-    app.add_handler(CommandHandler("goal", goal))
-    app.add_handler(CommandHandler("about", about))
-    app.run_polling()
+    try:
+        print(">>> [bot thread] starting...", flush=True)
+        token = os.getenv("BOT_TOKEN")
+        if not token:
+            print(">>> [bot thread] ERROR: BOT_TOKEN is missing! Set it in Render Environment.", flush=True)
+            return
+        print(f">>> [bot thread] token found (length: {len(token)})", flush=True)
+        app = ApplicationBuilder().token(token).build()
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("quote", quote))
+        app.add_handler(CommandHandler("goal", goal))
+        app.add_handler(CommandHandler("about", about))
+        print(">>> [bot thread] handlers registered, polling...", flush=True)
+        app.run_polling()
+    except Exception as e:
+        print(f">>> [bot thread] CRASHED: {e}", flush=True)
+        traceback.print_exc()
 
 if __name__ == "__main__":
-    # Start the Telegram bot in a separate thread
+    print(">>> launching bot thread...", flush=True)
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
-    # Run the web server in the main thread (Render needs this)
     port = int(os.getenv("PORT", 10000))
+    print(f">>> starting web server on port {port}...", flush=True)
     app_web.run(host="0.0.0.0", port=port)
